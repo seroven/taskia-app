@@ -13,6 +13,14 @@ export function TaskCardView({
     <article className={`task-card${overlay ? ' task-card-overlay' : ''}`}>
       <div className="task-card-top">
         <span className="course-tag">{task.course_name}</span>
+        <span className={`difficulty-tag difficulty-${task.difficulty_code}`}>
+          {task.difficulty_name}
+        </span>
+      </div>
+      <div className="task-card-meta">
+        <span className={`kind-tag kind-${task.task_kind}`}>
+          {task.task_kind === 'daily' ? 'Del día' : 'Proyecto'}
+        </span>
         <span className="due-tag">Para {task.due_date}</span>
       </div>
       <h3>{task.title}</h3>

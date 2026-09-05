@@ -1,7 +1,7 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { errorMessage } from '../lib/errors'
-import type { Course } from '../types'
+import type { Course, Difficulty, TaskKind } from '../types'
 import { todayISO } from '../types'
 import { DateField } from './ui/DateField'
 import { TextAreaField, TextField } from './ui/Field'
@@ -10,26 +10,51 @@ import { SelectField } from './ui/SelectField'
 interface Props {
   open: boolean
   courses: Course[]
+  difficulties: Difficulty[]
   onClose: () => void
   onCreate: (input: {
     title: string
     description?: string
     course_id: number
-    due_date: string
+    difficulty_id: number
+    task_kind: TaskKind
+    due_date?: string
   }) => Promise<void>
 }
 
-export function TaskFormModal({ open, courses, onClose, onCreate }: Props) {
+export function TaskFormModal({
+  open,
+  courses,
+  difficulties,
+  onClose,
+  onCreate,
+}: Props) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [courseId, setCourseId] = useState('')
+  const [difficultyId, setDifficultyId] = useState('')
+  const [taskKind, setTaskKind] = useState<TaskKind>('daily')
   const [dueDate, setDueDate] = useState(todayISO())
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
+  useEffect(() => {
+    if (!open) return
+    if (!difficultyId && difficulties.length > 0) {
+      const medium =
+        difficulties.find((item) => item.code === 'medium') ?? difficulties[0]
+      setDifficultyId(String(medium.id))
+    }
+  }, [open, difficulties, difficultyId])
+
   const courseOptions = courses.map((course) => ({
     value: String(course.id),
     label: course.name,
+  }))
+
+  const difficultyOptions = difficulties.map((item) => ({
+    value: String(item.id),
+    label: item.name,
   }))
 
   async function onSubmit(event: FormEvent) {
@@ -38,8 +63,12 @@ export function TaskFormModal({ open, courses, onClose, onCreate }: Props) {
       setError('Selecciona un curso')
       return
     }
-    if (!dueDate) {
-      setError('Elige una fecha')
+    if (!difficultyId) {
+      setError('Selecciona una dificultad')
+      return
+    }
+    if (taskKind === 'project' && !dueDate) {
+      setError('Elige hasta cuándo tienes para el proyecto')
       return
     }
     setSubmitting(true)
@@ -49,11 +78,15 @@ export function TaskFormModal({ open, courses, onClose, onCreate }: Props) {
         title,
         description: description.trim() || undefined,
         course_id: Number(courseId),
-        due_date: dueDate,
+        difficulty_id: Number(difficultyId),
+        task_kind: taskKind,
+        due_date: taskKind === 'project' ? dueDate : undefined,
       })
       setTitle('')
       setDescription('')
       setCourseId('')
+      setDifficultyId('')
+      setTaskKind('daily')
       setDueDate(todayISO())
       onClose()
     } catch (err) {
@@ -82,40 +115,79 @@ export function TaskFormModal({ open, courses, onClose, onCreate }: Props) {
             onClick={(e) => e.stopPropagation()}
             onSubmit={onSubmit}
           >
-            <h2>Nueva tarea</h2>
-            <p className="lede">Se creará en Pendiente.</p>
+            <div className="modal-panel-header">
+              <h2>Nueva tarea</h2>
+              <p className="lede">Se creará en Pendiente.</p>
+            </div>
 
-            <TextField
-              label="Título"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              required
-            />
+            <div className="modal-panel-body">
+              <div className="kind-toggle" role="group" aria-label="Tipo de tarea">
+                <button
+                  type="button"
+                  className={taskKind === 'daily' ? 'active' : ''}
+                  onClick={() => {
+                    setTaskKind('daily')
+                    setDueDate(todayISO())
+                  }}
+                >
+                  Tarea del día
+                </button>
+                <button
+                  type="button"
+                  className={taskKind === 'project' ? 'active' : ''}
+                  onClick={() => setTaskKind('project')}
+                >
+                  Proyecto
+                </button>
+              </div>
 
-            <TextAreaField
-              label="Descripción"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={3}
-            />
+              <TextField
+                label="Título"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                required
+              />
 
-            <SelectField
-              label="Curso"
-              value={courseId}
-              options={courseOptions}
-              placeholder="Selecciona…"
-              required
-              onChange={setCourseId}
-            />
+              <TextAreaField
+                label="Descripción"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={3}
+              />
 
-            <DateField
-              label="Fecha para realizarla"
-              value={dueDate}
-              required
-              onChange={setDueDate}
-            />
+              <SelectField
+                label="Curso"
+                value={courseId}
+                options={courseOptions}
+                placeholder="Selecciona…"
+                required
+                onChange={setCourseId}
+              />
 
-            {error && <p className="form-error">{error}</p>}
+              <SelectField
+                label="Dificultad"
+                value={difficultyId}
+                options={difficultyOptions}
+                placeholder="Selecciona…"
+                required
+                onChange={setDifficultyId}
+              />
+
+              {taskKind === 'daily' ? (
+                <p className="kind-hint">
+                  Fecha de término: <strong>hoy ({todayISO()})</strong>
+                </p>
+              ) : (
+                <DateField
+                  label="Hasta cuándo tienes para hacerlo"
+                  value={dueDate}
+                  required
+                  onChange={setDueDate}
+                />
+              )}
+
+              {error && <p className="form-error">{error}</p>}
+            </div>
 
             <div className="modal-actions">
               <button type="button" className="ghost" onClick={onClose}>

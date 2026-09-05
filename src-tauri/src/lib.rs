@@ -1,6 +1,7 @@
 mod auth;
 mod courses;
 mod db;
+mod difficulties;
 mod error;
 mod models;
 mod tasks;
@@ -57,6 +58,7 @@ pub fn run() {
             auth::logout,
             auth::current_user,
             courses::list_courses,
+            difficulties::list_difficulties,
             tasks::list_tasks,
             tasks::create_task,
             tasks::update_task,

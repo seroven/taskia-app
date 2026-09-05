@@ -42,15 +42,32 @@ CREATE TABLE IF NOT EXISTS courses (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------------
+-- Difficulties (Bajo / Medio / Alto)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS difficulties (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  code VARCHAR(20) NOT NULL,
+  name VARCHAR(50) NOT NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_difficulties_code (code),
+  UNIQUE KEY uq_difficulties_name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
 -- Tasks (Kanban)
 -- status: pending -> in_progress -> studying -> done
+-- task_kind: daily (due today) | project (custom due date)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS tasks (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   user_id BIGINT UNSIGNED NOT NULL,
   course_id BIGINT UNSIGNED NOT NULL,
+  difficulty_id BIGINT UNSIGNED NOT NULL,
   title VARCHAR(255) NOT NULL,
   description TEXT NULL,
+  task_kind ENUM('daily', 'project') NOT NULL DEFAULT 'daily',
   status ENUM('pending', 'in_progress', 'studying', 'done') NOT NULL DEFAULT 'pending',
   board_order INT NOT NULL DEFAULT 0,
   due_date DATE NOT NULL,
@@ -59,7 +76,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   PRIMARY KEY (id),
   KEY idx_tasks_user_id (user_id),
   KEY idx_tasks_course_id (course_id),
+  KEY idx_tasks_difficulty_id (difficulty_id),
   KEY idx_tasks_status (status),
+  KEY idx_tasks_task_kind (task_kind),
   KEY idx_tasks_due_date (due_date),
   KEY idx_tasks_created_at (created_at),
   KEY idx_tasks_user_status_order (user_id, status, board_order),
@@ -68,6 +87,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT fk_tasks_course
     FOREIGN KEY (course_id) REFERENCES courses (id)
+    ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_tasks_difficulty
+    FOREIGN KEY (difficulty_id) REFERENCES difficulties (id)
     ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -86,3 +108,14 @@ INSERT INTO courses (name) VALUES
   ('Algoritmos'),
   ('General') AS new_courses
 ON DUPLICATE KEY UPDATE name = new_courses.name;
+
+-- ---------------------------------------------------------------------------
+-- Seed: difficulties
+-- ---------------------------------------------------------------------------
+INSERT INTO difficulties (code, name, sort_order) VALUES
+  ('low', 'Bajo', 1),
+  ('medium', 'Medio', 2),
+  ('high', 'Alto', 3) AS new_difficulties
+ON DUPLICATE KEY UPDATE
+  name = new_difficulties.name,
+  sort_order = new_difficulties.sort_order;

@@ -29,6 +29,7 @@ import {
   STATUS_COLUMNS,
   todayISO,
   type Course,
+  type Difficulty,
   type Task,
   type TaskFilters,
   type TaskStatus,
@@ -54,6 +55,7 @@ const dropAnimation: DropAnimation = {
 export function BoardPage() {
   const { user, logout } = useAuth()
   const [courses, setCourses] = useState<Course[]>([])
+  const [difficulties, setDifficulties] = useState<Difficulty[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [activeTask, setActiveTask] = useState<Task | null>(null)
   const [overStatus, setOverStatus] = useState<TaskStatus | null>(null)
@@ -99,7 +101,12 @@ export function BoardPage() {
   useEffect(() => {
     void (async () => {
       try {
-        setCourses(await api.listCourses())
+        const [nextCourses, nextDifficulties] = await Promise.all([
+          api.listCourses(),
+          api.listDifficulties(),
+        ])
+        setCourses(nextCourses)
+        setDifficulties(nextDifficulties)
       } catch (err) {
         setError(errorMessage(err))
       }
@@ -341,6 +348,7 @@ export function BoardPage() {
       <TaskFormModal
         open={modalOpen}
         courses={courses}
+        difficulties={difficulties}
         onClose={() => setModalOpen(false)}
         onCreate={async (input) => {
           await api.createTask(input)
@@ -351,6 +359,7 @@ export function BoardPage() {
       <TaskDetailModal
         task={selectedTask}
         courses={courses}
+        difficulties={difficulties}
         onClose={() => setSelectedTask(null)}
         onSave={async (input) => {
           await api.updateTask(input)

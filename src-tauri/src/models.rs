@@ -54,6 +54,30 @@ impl TaskStatus {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskKind {
+    Daily,
+    Project,
+}
+
+impl TaskKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Daily => "daily",
+            Self::Project => "project",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Result<Self, String> {
+        match value {
+            "daily" => Ok(Self::Daily),
+            "project" => Ok(Self::Project),
+            other => Err(format!("Tipo de tarea inválido: {other}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublicUser {
     pub id: u64,
@@ -88,14 +112,26 @@ pub struct Course {
     pub name: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct Difficulty {
+    pub id: u64,
+    pub code: String,
+    pub name: String,
+    pub sort_order: i32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub id: u64,
     pub user_id: u64,
     pub course_id: u64,
     pub course_name: String,
+    pub difficulty_id: u64,
+    pub difficulty_code: String,
+    pub difficulty_name: String,
     pub title: String,
     pub description: Option<String>,
+    pub task_kind: TaskKind,
     pub status: TaskStatus,
     pub board_order: i32,
     pub due_date: String,
@@ -109,8 +145,12 @@ pub struct TaskRow {
     pub user_id: u64,
     pub course_id: u64,
     pub course_name: String,
+    pub difficulty_id: u64,
+    pub difficulty_code: String,
+    pub difficulty_name: String,
     pub title: String,
     pub description: Option<String>,
+    pub task_kind: String,
     pub status: String,
     pub board_order: i32,
     pub due_date: chrono::NaiveDate,
@@ -125,8 +165,12 @@ impl TaskRow {
             user_id: self.user_id,
             course_id: self.course_id,
             course_name: self.course_name,
+            difficulty_id: self.difficulty_id,
+            difficulty_code: self.difficulty_code,
+            difficulty_name: self.difficulty_name,
             title: self.title,
             description: self.description,
+            task_kind: TaskKind::from_db(&self.task_kind)?,
             status: TaskStatus::from_db(&self.status)?,
             board_order: self.board_order,
             due_date: self.due_date.to_string(),

@@ -1,11 +1,22 @@
-use chrono::NaiveDate;
+use chrono::{Local, NaiveDate};
 use serde::Deserialize;
 use tauri::State;
 
 use crate::auth::require_user;
 use crate::error::{AppError, AppResult};
-use crate::models::{Task, TaskRow, TaskStatus};
+use crate::models::{Task, TaskKind, TaskRow, TaskStatus};
 use crate::AppState;
+
+const TASK_SELECT: &str = r#"
+  SELECT
+    t.id, t.user_id, t.course_id, c.name AS course_name,
+    t.difficulty_id, d.code AS difficulty_code, d.name AS difficulty_name,
+    t.title, t.description, t.task_kind, t.status, t.board_order,
+    t.due_date, t.created_at, t.updated_at
+  FROM tasks t
+  INNER JOIN courses c ON c.id = t.course_id
+  INNER JOIN difficulties d ON d.id = t.difficulty_id
+"#;
 
 #[derive(Debug, Deserialize)]
 pub struct TaskFilters {
@@ -20,7 +31,9 @@ pub struct CreateTaskPayload {
     pub title: String,
     pub description: Option<String>,
     pub course_id: u64,
-    pub due_date: String,
+    pub difficulty_id: u64,
+    pub task_kind: String,
+    pub due_date: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,29 +50,79 @@ pub struct ReorderItem {
     pub board_order: i32,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateTaskPayload {
+    pub task_id: u64,
+    pub title: String,
+    pub description: Option<String>,
+    pub course_id: u64,
+    pub difficulty_id: u64,
+    pub task_kind: String,
+    pub due_date: Option<String>,
+    pub status: String,
+}
+
 fn parse_date(value: &str, field: &str) -> AppResult<NaiveDate> {
     NaiveDate::parse_from_str(value, "%Y-%m-%d")
         .map_err(|_| AppError::msg(format!("Fecha inválida en {field}. Usa YYYY-MM-DD")))
 }
 
-async fn fetch_task(pool: &sqlx::MySqlPool, task_id: u64, user_id: u64) -> AppResult<Task> {
-    let row = sqlx::query_as::<_, TaskRow>(
-        r#"
-        SELECT
-          t.id, t.user_id, t.course_id, c.name AS course_name,
-          t.title, t.description, t.status, t.board_order,
-          t.due_date, t.created_at, t.updated_at
-        FROM tasks t
-        INNER JOIN courses c ON c.id = t.course_id
-        WHERE t.id = ? AND t.user_id = ?
-        LIMIT 1
-        "#,
+fn today() -> NaiveDate {
+    Local::now().date_naive()
+}
+
+fn resolve_due_date(kind: &TaskKind, due_date: &Option<String>) -> AppResult<NaiveDate> {
+    match kind {
+        TaskKind::Daily => Ok(today()),
+        TaskKind::Project => {
+            let value = due_date
+                .as_ref()
+                .ok_or_else(|| AppError::msg("Elige hasta cuándo tienes para el proyecto"))?;
+            parse_date(value, "due_date")
+        }
+    }
+}
+
+async fn ensure_course(pool: &sqlx::MySqlPool, course_id: u64) -> AppResult<()> {
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM courses WHERE id = ? AND is_active = 1",
     )
-    .bind(task_id)
-    .bind(user_id)
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::msg("Tarea no encontrada"))?;
+    .bind(course_id)
+    .fetch_one(pool)
+    .await?;
+
+    if exists == 0 {
+        return Err(AppError::msg("Curso no válido"));
+    }
+    Ok(())
+}
+
+async fn ensure_difficulty(pool: &sqlx::MySqlPool, difficulty_id: u64) -> AppResult<()> {
+    let exists =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM difficulties WHERE id = ?")
+            .bind(difficulty_id)
+            .fetch_one(pool)
+            .await?;
+
+    if exists == 0 {
+        return Err(AppError::msg("Dificultad no válida"));
+    }
+    Ok(())
+}
+
+async fn fetch_task(pool: &sqlx::MySqlPool, task_id: u64, user_id: u64) -> AppResult<Task> {
+    let sql = format!(
+        "{TASK_SELECT}
+        WHERE t.id = ? AND t.user_id = ?
+        LIMIT 1"
+    );
+
+    let row = sqlx::query_as::<_, TaskRow>(&sql)
+        .bind(task_id)
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::msg("Tarea no encontrada"))?;
 
     row.into_task().map_err(AppError::msg)
 }
@@ -71,17 +134,7 @@ pub async fn list_tasks(
 ) -> AppResult<Vec<Task>> {
     let user = require_user(&state).await?;
 
-    let mut sql = String::from(
-        r#"
-        SELECT
-          t.id, t.user_id, t.course_id, c.name AS course_name,
-          t.title, t.description, t.status, t.board_order,
-          t.due_date, t.created_at, t.updated_at
-        FROM tasks t
-        INNER JOIN courses c ON c.id = t.course_id
-        WHERE t.user_id = ?
-        "#,
-    );
+    let mut sql = format!("{TASK_SELECT} WHERE t.user_id = ?");
 
     let mut created_on: Option<NaiveDate> = None;
     let mut due_on: Option<NaiveDate> = None;
@@ -141,22 +194,15 @@ pub async fn create_task(
         return Err(AppError::msg("El título es obligatorio"));
     }
 
-    let due_date = parse_date(&payload.due_date, "due_date")?;
+    let kind = TaskKind::from_db(&payload.task_kind).map_err(AppError::msg)?;
+    let due_date = resolve_due_date(&kind, &payload.due_date)?;
     let description = payload
         .description
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
-    let course_exists = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM courses WHERE id = ? AND is_active = 1",
-    )
-    .bind(payload.course_id)
-    .fetch_one(&state.pool)
-    .await?;
-
-    if course_exists == 0 {
-        return Err(AppError::msg("Curso no válido"));
-    }
+    ensure_course(&state.pool, payload.course_id).await?;
+    ensure_difficulty(&state.pool, payload.difficulty_id).await?;
 
     let next_order = sqlx::query_scalar::<_, Option<i32>>(
         r#"
@@ -173,14 +219,19 @@ pub async fn create_task(
 
     let result = sqlx::query(
         r#"
-        INSERT INTO tasks (user_id, course_id, title, description, status, board_order, due_date)
-        VALUES (?, ?, ?, ?, 'pending', ?, ?)
+        INSERT INTO tasks (
+          user_id, course_id, difficulty_id, title, description,
+          task_kind, status, board_order, due_date
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
         "#,
     )
     .bind(user.id)
     .bind(payload.course_id)
+    .bind(payload.difficulty_id)
     .bind(&title)
     .bind(description)
+    .bind(kind.as_str())
     .bind(next_order)
     .bind(due_date)
     .execute(&state.pool)
@@ -218,16 +269,6 @@ pub async fn move_task(
     fetch_task(&state.pool, payload.task_id, user.id).await
 }
 
-#[derive(Debug, Deserialize)]
-pub struct UpdateTaskPayload {
-    pub task_id: u64,
-    pub title: String,
-    pub description: Option<String>,
-    pub course_id: u64,
-    pub due_date: String,
-    pub status: String,
-}
-
 #[tauri::command]
 pub async fn update_task(
     payload: UpdateTaskPayload,
@@ -240,22 +281,15 @@ pub async fn update_task(
     }
 
     let status = TaskStatus::from_db(&payload.status).map_err(AppError::msg)?;
-    let due_date = parse_date(&payload.due_date, "due_date")?;
+    let kind = TaskKind::from_db(&payload.task_kind).map_err(AppError::msg)?;
+    let due_date = resolve_due_date(&kind, &payload.due_date)?;
     let description = payload
         .description
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
-    let course_exists = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM courses WHERE id = ? AND is_active = 1",
-    )
-    .bind(payload.course_id)
-    .fetch_one(&state.pool)
-    .await?;
-
-    if course_exists == 0 {
-        return Err(AppError::msg("Curso no válido"));
-    }
+    ensure_course(&state.pool, payload.course_id).await?;
+    ensure_difficulty(&state.pool, payload.difficulty_id).await?;
 
     let current = fetch_task(&state.pool, payload.task_id, user.id).await?;
     let status_changed = current.status.as_str() != status.as_str();
@@ -281,13 +315,16 @@ pub async fn update_task(
     let updated = sqlx::query(
         r#"
         UPDATE tasks
-        SET title = ?, description = ?, course_id = ?, due_date = ?, status = ?, board_order = ?
+        SET title = ?, description = ?, course_id = ?, difficulty_id = ?,
+            task_kind = ?, due_date = ?, status = ?, board_order = ?
         WHERE id = ? AND user_id = ?
         "#,
     )
     .bind(&title)
     .bind(description)
     .bind(payload.course_id)
+    .bind(payload.difficulty_id)
+    .bind(kind.as_str())
     .bind(due_date)
     .bind(status.as_str())
     .bind(board_order)

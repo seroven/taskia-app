@@ -1,9 +1,11 @@
 import { invoke } from '@tauri-apps/api/core'
 import type {
   Course,
+  Difficulty,
   PublicUser,
   Task,
   TaskFilters,
+  TaskKind,
   TaskStatus,
 } from './types'
 
@@ -36,6 +38,9 @@ export const api = {
   listCourses() {
     return invoke<Course[]>('list_courses')
   },
+  listDifficulties() {
+    return invoke<Difficulty[]>('list_difficulties')
+  },
   listTasks(filters: TaskFilters) {
     return invoke<Task[]>('list_tasks', { filters: cleanFilters(filters) })
   },
@@ -43,7 +48,9 @@ export const api = {
     title: string
     description?: string
     course_id: number
-    due_date: string
+    difficulty_id: number
+    task_kind: TaskKind
+    due_date?: string
   }) {
     return invoke<Task>('create_task', { payload: input })
   },
@@ -52,7 +59,9 @@ export const api = {
     title: string
     description?: string
     course_id: number
-    due_date: string
+    difficulty_id: number
+    task_kind: TaskKind
+    due_date?: string
     status: TaskStatus
   }) {
     return invoke<Task>('update_task', { payload: input })

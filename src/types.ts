@@ -2,6 +2,8 @@ export type UserRole = 'user' | 'admin'
 
 export type TaskStatus = 'pending' | 'in_progress' | 'studying' | 'done'
 
+export type TaskKind = 'daily' | 'project'
+
 export interface PublicUser {
   id: number
   username: string
@@ -14,13 +16,24 @@ export interface Course {
   name: string
 }
 
+export interface Difficulty {
+  id: number
+  code: string
+  name: string
+  sort_order: number
+}
+
 export interface Task {
   id: number
   user_id: number
   course_id: number
   course_name: string
+  difficulty_id: number
+  difficulty_code: string
+  difficulty_name: string
   title: string
   description: string | null
+  task_kind: TaskKind
   status: TaskStatus
   board_order: number
   due_date: string
