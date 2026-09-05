@@ -76,4 +76,27 @@ export const api = {
   ) {
     return invoke<void>('reorder_tasks', { items })
   },
+  studyLoadSession(task_id: number) {
+    return invoke<import('./lib/studyProtocol').StudySession>('study_load_session', {
+      taskId: task_id,
+    })
+  },
+  studySaveBoard(task_id: number, board: import('./lib/studyProtocol').StudyBoardScene) {
+    return invoke<void>('study_save_board', {
+      taskId: task_id,
+      board,
+    })
+  },
+  studyChat(
+    task_id: number,
+    user_message: string,
+    board?: { description?: string; image_base64?: string | null },
+  ) {
+    return invoke<import('./lib/studyProtocol').StudyChatResponse>('study_chat', {
+      taskId: task_id,
+      userMessage: user_message,
+      boardDescription: board?.description ?? null,
+      boardImageBase64: board?.image_base64 ?? null,
+    })
+  },
 }

@@ -52,7 +52,11 @@ const dropAnimation: DropAnimation = {
   }),
 }
 
-export function BoardPage() {
+export function BoardPage({
+  onOpenStudy,
+}: {
+  onOpenStudy: (task: Task) => void
+}) {
   const { user, logout } = useAuth()
   const [courses, setCourses] = useState<Course[]>([])
   const [difficulties, setDifficulties] = useState<Difficulty[]>([])
@@ -335,7 +339,10 @@ export function BoardPage() {
                 label={column.label}
                 tasks={loading ? [] : grouped[column.id]}
                 highlighted={!!activeTask && overStatus === column.id}
-                onOpenTask={setSelectedTask}
+                onOpenTask={(task) => {
+                  if (task.status === 'studying') onOpenStudy(task)
+                  else setSelectedTask(task)
+                }}
               />
             ))}
             <DragOverlay dropAnimation={dropAnimation} zIndex={1000}>

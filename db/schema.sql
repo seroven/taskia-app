@@ -94,6 +94,65 @@ CREATE TABLE IF NOT EXISTS tasks (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------------
+-- Study sessions (rolling context summary for Gemini — not full chat history)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS study_sessions (
+  task_id BIGINT UNSIGNED NOT NULL,
+  tutor_phase ENUM('understanding', 'practicing', 'reviewing') NOT NULL DEFAULT 'understanding',
+  topic_summary TEXT NOT NULL,
+  context_summary TEXT NOT NULL,
+  hints_level INT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (task_id),
+  CONSTRAINT fk_study_sessions_task
+    FOREIGN KEY (task_id) REFERENCES tasks (id)
+    ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
+-- Study chat messages (UI history; Gemini uses context_summary instead)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS study_messages (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  task_id BIGINT UNSIGNED NOT NULL,
+  role ENUM('user', 'assistant') NOT NULL,
+  content TEXT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_study_messages_task_created (task_id, created_at),
+  CONSTRAINT fk_study_messages_task
+    FOREIGN KEY (task_id) REFERENCES tasks (id)
+    ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
+-- Study boards (Excalidraw scene per task)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS study_boards (
+  task_id BIGINT UNSIGNED NOT NULL,
+  board_json LONGTEXT NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (task_id),
+  CONSTRAINT fk_study_boards_task
+    FOREIGN KEY (task_id) REFERENCES tasks (id)
+    ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
+-- User study memory (cross-task tutor memory; rolling summary)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_study_memory (
+  user_id BIGINT UNSIGNED NOT NULL,
+  memory_summary TEXT NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id),
+  CONSTRAINT fk_user_study_memory_user
+    FOREIGN KEY (user_id) REFERENCES users (id)
+    ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
 -- Seed: courses
 -- ---------------------------------------------------------------------------
 INSERT INTO courses (name) VALUES

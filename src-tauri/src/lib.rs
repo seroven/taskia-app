@@ -4,6 +4,7 @@ mod db;
 mod difficulties;
 mod error;
 mod models;
+mod study;
 mod tasks;
 
 use std::sync::Arc;
@@ -64,6 +65,9 @@ pub fn run() {
             tasks::update_task,
             tasks::move_task,
             tasks::reorder_tasks,
+            study::study_load_session,
+            study::study_save_board,
+            study::study_chat,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

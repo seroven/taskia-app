@@ -9,6 +9,12 @@ pub enum AppError {
     Sqlx(#[from] sqlx::Error),
     #[error(transparent)]
     Bcrypt(#[from] bcrypt::BcryptError),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Http(#[from] reqwest::Error),
 }
 
 impl Serialize for AppError {

@@ -110,7 +110,11 @@ async fn ensure_difficulty(pool: &sqlx::MySqlPool, difficulty_id: u64) -> AppRes
     Ok(())
 }
 
-async fn fetch_task(pool: &sqlx::MySqlPool, task_id: u64, user_id: u64) -> AppResult<Task> {
+pub(crate) async fn fetch_task(
+    pool: &sqlx::MySqlPool,
+    task_id: u64,
+    user_id: u64,
+) -> AppResult<Task> {
     let sql = format!(
         "{TASK_SELECT}
         WHERE t.id = ? AND t.user_id = ?
