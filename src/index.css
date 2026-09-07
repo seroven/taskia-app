@@ -577,6 +577,95 @@ button.field-control {
   margin: 0 28px 12px;
 }
 
+.toast-viewport {
+  position: fixed;
+  top: 22px;
+  right: 22px;
+  bottom: auto;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(400px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.app-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 14px 14px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background-color: var(--panel-strong);
+  background-image: linear-gradient(
+    135deg,
+    var(--accent-soft) 0%,
+    var(--panel-strong) 58%
+  );
+  box-shadow: var(--shadow);
+  font-family: var(--font-ui);
+  color: var(--ink);
+  opacity: 1;
+  isolation: isolate;
+}
+
+.toast-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  background: var(--panel-strong);
+  color: var(--accent);
+}
+
+.toast-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast-title {
+  display: block;
+  font-size: 0.98rem;
+  font-weight: 800;
+  line-height: 1.25;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+}
+
+.toast-subtitle {
+  margin: 4px 0 0;
+  font-size: 0.88rem;
+  font-weight: 650;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+.toast-close {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-weight: 800;
+}
+
+.toast-close:hover {
+  background: var(--accent);
+  color: #ffffff;
+}
+
 .topbar {
   display: flex;
   justify-content: space-between;
@@ -814,6 +903,19 @@ button.field-control {
   justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.study-passed-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #047857;
+  background: rgba(16, 185, 129, 0.16);
+  border: 1px solid rgba(16, 185, 129, 0.28);
 }
 
 .kind-toggle {

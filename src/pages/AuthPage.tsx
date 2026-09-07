@@ -4,21 +4,21 @@ import { useAuth } from '../auth'
 import { ThemeToggle } from '../components/ThemeToggle'
 import { TextField } from '../components/ui/Field'
 import { errorMessage } from '../lib/errors'
+import { useToast } from '../toast'
 
 type Mode = 'login' | 'register'
 
 export function AuthPage() {
   const { login, register } = useAuth()
+  const { showToast } = useToast()
   const [mode, setMode] = useState<Mode>('login')
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
-    setError(null)
     setSubmitting(true)
     try {
       if (mode === 'login') {
@@ -27,7 +27,12 @@ export function AuthPage() {
         await register(username, email, password)
       }
     } catch (err) {
-      setError(errorMessage(err))
+      const detail = errorMessage(err)
+      showToast({
+        title: mode === 'login' ? 'No se pudo entrar' : 'No se pudo registrar',
+        subtitle: detail.length > 90 ? `${detail.slice(0, 87)}…` : detail,
+        tone: 'error',
+      })
     } finally {
       setSubmitting(false)
     }
@@ -54,26 +59,20 @@ export function AuthPage() {
           <button
             type="button"
             className={mode === 'login' ? 'active' : ''}
-            onClick={() => {
-              setMode('login')
-              setError(null)
-            }}
+            onClick={() => setMode('login')}
           >
             Entrar
           </button>
           <button
             type="button"
             className={mode === 'register' ? 'active' : ''}
-            onClick={() => {
-              setMode('register')
-              setError(null)
-            }}
+            onClick={() => setMode('register')}
           >
             Crear cuenta
           </button>
         </div>
 
-        <form onSubmit={onSubmit} className="auth-form">
+        <form onSubmit={(e) => void onSubmit(e)} className="auth-form">
           <TextField
             label="Usuario"
             value={username}
@@ -105,8 +104,6 @@ export function AuthPage() {
             required
             minLength={6}
           />
-
-          {error && <p className="form-error">{error}</p>}
 
           <button type="submit" className="primary" disabled={submitting}>
             {submitting

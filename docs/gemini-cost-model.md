@@ -131,7 +131,8 @@ JSON esperado:
   "user_memory_summary": "...",
   "exercise": null,
   "draw_ops": [],
-  "hints_level": 0
+  "hints_level": 0,
+  "study_eval": { "passed": false, "evidence": "" }
 }
 ```
 
@@ -144,9 +145,10 @@ JSON esperado:
 | `user_memory_summary` | ≤600; a veces solo “repetir” | 0–150 |
 | `exercise` | a menudo `null` | 0–80 |
 | `draw_ops` | suele `[]` | 0–100 |
+| `study_eval` | passed + evidence corta | **20–40** |
 
-**Output típico útil:** ~**250–600 tokens**.  
-**Output “pesado”** (ejercicio + draw_ops): ~**600–1 200 tokens**.  
+**Output típico útil:** ~**250–650 tokens**.
+**Output “pesado”** (ejercicio + draw_ops): ~**600–1 200 tokens**.
 `maxOutputTokens: 4096` es techo, no el promedio.
 
 ### Thinking (extra facturable en algunos modelos)

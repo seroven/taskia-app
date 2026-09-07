@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   task_kind ENUM('daily', 'project') NOT NULL DEFAULT 'daily',
   status ENUM('pending', 'in_progress', 'studying', 'done') NOT NULL DEFAULT 'pending',
   board_order INT NOT NULL DEFAULT 0,
+  study_passed TINYINT(1) NOT NULL DEFAULT 0,
   due_date DATE NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

@@ -108,6 +108,11 @@ export function StudyPage({ taskId, onBack }: Props) {
       setContext(result.context)
       setPhase(result.reply.phase)
       setExercise(result.reply.exercise)
+      if (result.study_passed) {
+        setTask((prev) =>
+          prev ? { ...prev, study_passed: true } : prev,
+        )
+      }
       const ops = parseDrawOps(result.reply.draw_ops)
       if (ops.length > 0) {
         boardRef.current?.applyDrawOps(ops)
@@ -157,6 +162,9 @@ export function StudyPage({ taskId, onBack }: Props) {
             <span className={`difficulty-tag difficulty-${task.difficulty_code}`}>
               {task.difficulty_name}
             </span>
+            {task.study_passed && (
+              <span className="study-passed-tag">Listo</span>
+            )}
           </div>
         </div>
         <div className="study-mode-toggle" role="group" aria-label="Modo">

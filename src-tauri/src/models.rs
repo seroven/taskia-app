@@ -134,6 +134,7 @@ pub struct Task {
     pub task_kind: TaskKind,
     pub status: TaskStatus,
     pub board_order: i32,
+    pub study_passed: bool,
     pub due_date: String,
     pub created_at: String,
     pub updated_at: String,
@@ -153,6 +154,7 @@ pub struct TaskRow {
     pub task_kind: String,
     pub status: String,
     pub board_order: i32,
+    pub study_passed: i8,
     pub due_date: chrono::NaiveDate,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
@@ -173,9 +175,18 @@ impl TaskRow {
             task_kind: TaskKind::from_db(&self.task_kind)?,
             status: TaskStatus::from_db(&self.status)?,
             board_order: self.board_order,
+            study_passed: self.study_passed != 0,
             due_date: self.due_date.to_string(),
-            created_at: self.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
-            updated_at: self.updated_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+            created_at: format_utc_naive_as_local(self.created_at),
+            updated_at: format_utc_naive_as_local(self.updated_at),
         })
     }
+}
+
+fn format_utc_naive_as_local(value: chrono::NaiveDateTime) -> String {
+    use chrono::{Local, TimeZone, Utc};
+    Utc.from_utc_datetime(&value)
+        .with_timezone(&Local)
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string()
 }

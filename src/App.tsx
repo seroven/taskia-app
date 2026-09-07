@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { AuthProvider, useAuth } from './auth'
 import { ThemeProvider } from './theme'
+import { ToastProvider } from './toast'
 import { AdminPage } from './pages/AdminPage'
 import { AuthPage } from './pages/AuthPage'
 import { BoardPage } from './pages/BoardPage'
@@ -77,9 +78,11 @@ function AppRouter() {
 export default function App() {
   return (
     <ThemeProvider>
-      <AuthProvider>
-        <AppRouter />
-      </AuthProvider>
+      <ToastProvider>
+        <AuthProvider>
+          <AppRouter />
+        </AuthProvider>
+      </ToastProvider>
     </ThemeProvider>
   )
 }

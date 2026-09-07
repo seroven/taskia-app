@@ -18,6 +18,15 @@ pub async fn create_pool() -> AppResult<MySqlPool> {
     let pool = MySqlPoolOptions::new()
         .max_connections(5)
         .acquire_timeout(Duration::from_secs(8))
+        .after_connect(|conn, _meta| {
+            Box::pin(async move {
+                // DATETIME en UTC; el filtro “Creada el” usa el huso local del SO.
+                sqlx::query("SET time_zone = '+00:00'")
+                    .execute(&mut *conn)
+                    .await?;
+                Ok(())
+            })
+        })
         .connect(&url)
         .await
         .map_err(|err| AppError::msg(format!("No se pudo conectar a MySQL: {err}")))?;

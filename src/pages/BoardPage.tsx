@@ -27,6 +27,8 @@ import { TaskFormModal } from '../components/TaskFormModal'
 import { ThemeToggle } from '../components/ThemeToggle'
 import {
   STATUS_COLUMNS,
+  STUDY_PASSED_REQUIRED_MSG,
+  STUDY_PASSED_REQUIRED_TITLE,
   todayISO,
   type Course,
   type Difficulty,
@@ -35,9 +37,19 @@ import {
   type TaskStatus,
 } from '../types'
 import { errorMessage } from '../lib/errors'
+import { useToast } from '../toast'
 
 function isStatus(value: string | number): value is TaskStatus {
   return STATUS_COLUMNS.some((column) => column.id === value)
+}
+
+function needsStudyPassedGate(task: Task, nextStatus: TaskStatus): boolean {
+  return (
+    nextStatus === 'done' &&
+    task.status !== 'done' &&
+    task.difficulty_code === 'high' &&
+    !task.study_passed
+  )
 }
 
 const dropAnimation: DropAnimation = {
@@ -58,6 +70,7 @@ export function BoardPage({
   onOpenStudy: (task: Task) => void
 }) {
   const { user, logout } = useAuth()
+  const { showToast } = useToast()
   const [courses, setCourses] = useState<Course[]>([])
   const [difficulties, setDifficulties] = useState<Difficulty[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
@@ -159,7 +172,15 @@ export function BoardPage({
     try {
       await api.reorderTasks([...unique.values()])
     } catch (err) {
-      setError(errorMessage(err))
+      const message = errorMessage(err)
+      setError(message)
+      if (message.includes('dificultad Alta')) {
+        showToast({
+          title: STUDY_PASSED_REQUIRED_TITLE,
+          subtitle: STUDY_PASSED_REQUIRED_MSG,
+          tone: 'warning',
+        })
+      }
       await loadTasks(filters)
     }
   }
@@ -271,6 +292,26 @@ export function BoardPage({
           ]
         }
       }
+    }
+
+    const moved = next.find((task) => task.id === activeId)
+    if (
+      moved &&
+      overContainer === 'done' &&
+      activeContainer !== 'done' &&
+      needsStudyPassedGate(
+        { ...moved, status: activeContainer },
+        'done',
+      )
+    ) {
+      showToast({
+        title: STUDY_PASSED_REQUIRED_TITLE,
+        subtitle: STUDY_PASSED_REQUIRED_MSG,
+        tone: 'warning',
+      })
+      setError(STUDY_PASSED_REQUIRED_MSG)
+      await loadTasks(filters)
+      return
     }
 
     await persistBoard(next)

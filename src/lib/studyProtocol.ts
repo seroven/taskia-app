@@ -55,6 +55,10 @@ export interface GeminiTutorReply {
   exercise: StudyExercise | null
   draw_ops: DrawOp[]
   hints_level: number
+  study_eval?: {
+    passed: boolean
+    evidence: string
+  }
 }
 
 export interface StudyBoardScene {
@@ -75,6 +79,7 @@ export interface StudySession {
 export interface StudyChatResponse {
   reply: GeminiTutorReply
   context: StudyContext
+  study_passed: boolean
 }
 
 export function phaseLabel(phase: string): string {

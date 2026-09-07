@@ -16,6 +16,11 @@ export function TaskCardView({
         <span className={`difficulty-tag difficulty-${task.difficulty_code}`}>
           {task.difficulty_name}
         </span>
+        {task.study_passed && (
+          <span className="study-passed-tag" title="El tutor confirmó que entendiste">
+            Listo
+          </span>
+        )}
       </div>
       <div className="task-card-meta">
         <span className={`kind-tag kind-${task.task_kind}`}>

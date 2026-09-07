@@ -1,7 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { errorMessage } from '../../lib/errors'
+import { useToast } from '../../toast'
 import {
   STATUS_COLUMNS,
+  STUDY_PASSED_REQUIRED_MSG,
+  STUDY_PASSED_REQUIRED_TITLE,
   todayISO,
   type Course,
   type Difficulty,
@@ -32,6 +35,7 @@ interface Props {
 }
 
 export function TaskEditPanel({ task, courses, difficulties, onSave }: Props) {
+  const { showToast } = useToast()
   const [title, setTitle] = useState(task.title)
   const [description, setDescription] = useState(task.description ?? '')
   const [courseId, setCourseId] = useState(String(task.course_id))
@@ -70,6 +74,24 @@ export function TaskEditPanel({ task, courses, difficulties, onSave }: Props) {
     setError(null)
     setSaved(false)
     try {
+      const nextDifficulty =
+        difficulties.find((item) => item.id === Number(difficultyId))?.code ??
+        task.difficulty_code
+      if (
+        status === 'done' &&
+        task.status !== 'done' &&
+        nextDifficulty === 'high' &&
+        !task.study_passed
+      ) {
+        showToast({
+          title: STUDY_PASSED_REQUIRED_TITLE,
+          subtitle: STUDY_PASSED_REQUIRED_MSG,
+          tone: 'warning',
+        })
+        setError(STUDY_PASSED_REQUIRED_MSG)
+        setSubmitting(false)
+        return
+      }
       await onSave({
         task_id: task.id,
         title,

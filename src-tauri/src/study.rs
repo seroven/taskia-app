@@ -80,6 +80,12 @@ pub struct StudyExercise {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StudyEval {
+    pub passed: bool,
+    pub evidence: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeminiTutorReply {
     pub phase: String,
     pub speak_to_child: String,
@@ -91,12 +97,14 @@ pub struct GeminiTutorReply {
     pub exercise: Option<StudyExercise>,
     pub draw_ops: Vec<Value>,
     pub hints_level: i32,
+    pub study_eval: StudyEval,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StudyChatResponse {
     pub reply: GeminiTutorReply,
     pub context: StudyContext,
+    pub study_passed: bool,
 }
 
 #[derive(Debug, FromRow)]
@@ -380,33 +388,45 @@ fn extract_json_object(text: &str) -> AppResult<String> {
 }
 
 fn tutor_system_prompt(allow_ai_draw: bool) -> String {
-    let base = r##"Tutor amable para niño ~10 años. Español latinoamericano, claro y breve.
+    let mut prompt = String::from(
+        r##"Tutor amable para niño ~10 años. Español latinoamericano, claro y breve.
 No des la solución completa: guía con preguntas/pistas. Prioriza la tarea actual.
 Recibes context_summary (esta tarea) y user_memory_summary (entre tareas). No el chat entero.
 Pizarra de entrada: si board_has_drawing=false, ignora lo que haya dibujado el niño.
 Responde SOLO JSON (sin markdown):
-{"phase":"understanding|practicing|reviewing","speak_to_child":"...","ask_questions":[],"topic_summary":"...","context_summary":"...","user_memory_summary":"...","exercise":null,"draw_ops":[],"hints_level":0}
+{"phase":"understanding|practicing|reviewing","speak_to_child":"...","ask_questions":[],"topic_summary":"...","context_summary":"...","user_memory_summary":"...","exercise":null,"draw_ops":[],"hints_level":0,"study_eval":{"passed":false,"evidence":""}}
 context_summary ≤ 400 chars. user_memory_summary ≤ 600 chars (si update_user_memory=false, repite el recibido).
 exercise null salvo en practicing.
-"##;
+Dominio (study_eval): passed=true SOLO si TODOS se cumplen:
+1) phase=reviewing
+2) ≥2 aciertos reales del niño en ejercicios/variaciones (no solo “ok”)
+3) al menos una variación distinta al ejemplo inicial
+4) no regalaste la solución completa en esos turnos
+5) el niño explicó en corto el procedimiento O aplicó el concepto con números nuevos
+6) user_turns ≥ 3 (si user_turns<3 → passed=false)
+Si study_passed_already=true → study_eval.passed=true y evidence corta "ya aprobado".
+Si duda → passed=false. Si passed=true, celebra en speak_to_child y di que puede mover la tarea a Terminado.
+"##,
+    );
 
     if !allow_ai_draw {
-        // Sin bloque de dibujo: no gastamos tokens enseñando draw_ops si el switch está OFF.
-        return format!("{base}draw_ops siempre []. No dibujes en la pizarra.");
+        prompt.push_str("draw_ops siempre []. No dibujes en la pizarra.");
+        return prompt;
     }
 
-    format!(
-        r##"{base}Pizarra de salida: allow_ai_draw=true. Si el niño pide ejercicio nuevo, practica, o conviene visualizar:
-1) Empieza con {{"op":"clear_board"}} (la app borra toda la pizarra y centra tu dibujo grande).
+    prompt.push_str(
+        r##"Pizarra de salida: allow_ai_draw=true. Si el niño pide ejercicio nuevo, practica, o conviene visualizar:
+1) Empieza con {"op":"clear_board"} (la app borra toda la pizarra y centra tu dibujo grande).
 2) Dibuja con 3–8 ops. Preferí stamps con scale≈2; luego shape/text con labels.
 3) No dejes números/figuras solo en speak_to_child: deben ir en draw_ops.
 4) Coordenadas relativas libres (la app re-centra). Labels claros (base, altura, lados).
 Stamps: right_triangle, circle, square, number_line, arrow.
 Shapes: rectangle|ellipse|triangle|line|arrow|text (x,y,w,h,label?,color?).
 Ejemplo (triángulo base 8 altura 4):
-[{{"op":"clear_board"}},{{"op":"stamp","id":"right_triangle","x":0,"y":0,"scale":2}},{{"op":"shape","type":"text","x":110,"y":175,"label":"8"}},{{"op":"shape","type":"text","x":-30,"y":70,"label":"4"}}]
-"##
-    )
+[{"op":"clear_board"},{"op":"stamp","id":"right_triangle","x":0,"y":0,"scale":2},{"op":"shape","type":"text","x":110,"y":175,"label":"8"},{"op":"shape","type":"text","x":-30,"y":70,"label":"4"}]
+"##,
+    );
+    prompt
 }
 
 fn build_user_payload(
@@ -417,6 +437,7 @@ fn build_user_payload(
     user_memory: &str,
     update_user_memory: bool,
     allow_ai_draw: bool,
+    user_turns: usize,
 ) -> String {
     let description = truncate_chars(
         task.description.as_deref().unwrap_or(""),
@@ -430,27 +451,30 @@ fn build_user_payload(
     // Instrucciones cortas: el detalle de draw_ops solo vive en el system prompt si allow_ai_draw.
     let instruction = match (allow_ai_draw, board_has_content) {
         (true, true) => {
-            "Responde breve. Usa context + memoria + mensaje + pizarra. Si propones ejercicio o visual, RELLENA draw_ops."
+            "Responde breve. Usa context + memoria + mensaje + pizarra. Si propones ejercicio o visual, RELLENA draw_ops. Evalúa study_eval."
         }
         (true, false) => {
-            "Responde breve. Usa context + memoria + mensaje. Si propones ejercicio o el niño pide dibujar, RELLENA draw_ops."
+            "Responde breve. Usa context + memoria + mensaje. Si propones ejercicio o el niño pide dibujar, RELLENA draw_ops. Evalúa study_eval."
         }
         (false, true) => {
-            "Responde breve. Usa context + memoria + mensaje + pizarra."
+            "Responde breve. Usa context + memoria + mensaje + pizarra. Evalúa study_eval."
         }
         (false, false) => {
-            "Responde breve. Usa context + memoria + mensaje. Ignora pizarra."
+            "Responde breve. Usa context + memoria + mensaje. Ignora pizarra. Evalúa study_eval."
         }
     };
 
     let mut payload = json!({
       "instruction": instruction,
       "update_user_memory": update_user_memory,
+      "user_turns": user_turns,
+      "study_passed_already": task.study_passed,
       "task": {
         "title": truncate_chars(&task.title, 120),
         "description": description,
         "course": task.course_name,
-        "difficulty": task.difficulty_name
+        "difficulty": task.difficulty_name,
+        "difficulty_code": task.difficulty_code
       },
       "phase": context.tutor_phase,
       "topic_summary": truncate_chars(&context.topic_summary, 120),
@@ -662,6 +686,20 @@ fn parse_tutor_reply(raw: &str) -> AppResult<GeminiTutorReply> {
             .get("hints_level")
             .and_then(|v| v.as_i64())
             .unwrap_or(0) as i32,
+        study_eval: {
+            let eval = value.get("study_eval");
+            StudyEval {
+                passed: eval
+                    .and_then(|v| v.get("passed"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+                evidence: eval
+                    .and_then(|v| v.get("evidence"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            }
+        },
     })
 }
 
@@ -689,6 +727,7 @@ async fn request_tutor_reply(
     user_memory: &str,
     update_user_memory: bool,
     allow_ai_draw: bool,
+    user_turns: usize,
 ) -> AppResult<GeminiTutorReply> {
     let system = tutor_system_prompt(allow_ai_draw);
     let payload = build_user_payload(
@@ -699,6 +738,7 @@ async fn request_tutor_reply(
         user_memory,
         update_user_memory,
         allow_ai_draw,
+        user_turns,
     );
     let raw = call_gemini(api_key, model, &system, &payload, board_image_base64).await?;
 
@@ -710,6 +750,18 @@ async fn request_tutor_reply(
 
     if !allow_ai_draw {
         reply.draw_ops = Vec::new();
+    }
+
+    // Red de seguridad: no aprobar demasiado pronto aunque Gemini diga passed.
+    if user_turns < 3 || task.study_passed {
+        if task.study_passed {
+            reply.study_eval.passed = true;
+            if reply.study_eval.evidence.trim().is_empty() {
+                reply.study_eval.evidence = "ya aprobado".into();
+            }
+        } else {
+            reply.study_eval.passed = false;
+        }
     }
 
     if reply.speak_to_child.trim().is_empty() {
@@ -756,6 +808,21 @@ fn compose_assistant_visible(reply: &GeminiTutorReply) -> String {
     assistant_visible
 }
 
+async fn mark_study_passed(pool: &sqlx::MySqlPool, task_id: u64, user_id: u64) -> AppResult<()> {
+    sqlx::query(
+        r#"
+        UPDATE tasks
+        SET study_passed = 1
+        WHERE id = ? AND user_id = ?
+        "#,
+    )
+    .bind(task_id)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 async fn apply_reply(
     pool: &sqlx::MySqlPool,
     user_id: u64,
@@ -781,6 +848,9 @@ async fn apply_reply(
             &truncate_chars(&reply.user_memory_summary, MAX_USER_MEMORY),
         )
         .await?;
+    }
+    if reply.study_eval.passed {
+        mark_study_passed(pool, context.task_id, user_id).await?;
     }
     Ok(())
 }
@@ -913,6 +983,7 @@ pub async fn study_chat(
         &user_memory,
         update_user_memory,
         allow_ai_draw,
+        user_turns,
     )
     .await?;
     apply_reply(
@@ -924,5 +995,10 @@ pub async fn study_chat(
     )
     .await?;
 
-    Ok(StudyChatResponse { reply, context })
+    let study_passed = task.study_passed || reply.study_eval.passed;
+    Ok(StudyChatResponse {
+        reply,
+        context,
+        study_passed,
+    })
 }
