@@ -262,7 +262,7 @@ const MAX_CONTEXT_SUMMARY: usize = 400;
 const MAX_USER_MEMORY: usize = 600;
 const MAX_BOARD_DESCRIPTION: usize = 500;
 const MAX_SPEAK: usize = 450;
-
+const MAX_LAST_TUTOR: usize = 320;
 
 async fn ensure_study_session(pool: &sqlx::MySqlPool, task_id: u64) -> AppResult<()> {
     sqlx::query(
@@ -391,12 +391,14 @@ fn tutor_system_prompt(allow_ai_draw: bool) -> String {
     let mut prompt = String::from(
         r##"Tutor amable para niño ~10 años. Español latinoamericano, claro y breve.
 No des la solución completa: guía con preguntas/pistas. Prioriza la tarea actual.
-Recibes context_summary (esta tarea) y user_memory_summary (entre tareas). No el chat entero.
+Recibes context_summary (esta tarea), last_tutor_message (tu burbuja anterior) y user_memory_summary. No el chat entero.
+Mantén coherencia con el ejercicio abierto: si last_tutor_message o context_summary citan un número/ejercicio, NO preguntes de qué número hablan.
 Pizarra de entrada: si board_has_drawing=false, ignora lo que haya dibujado el niño.
 Responde SOLO JSON (sin markdown):
 {"phase":"understanding|practicing|reviewing","speak_to_child":"...","ask_questions":[],"topic_summary":"...","context_summary":"...","user_memory_summary":"...","exercise":null,"draw_ops":[],"hints_level":0,"study_eval":{"passed":false,"evidence":""}}
-context_summary ≤ 400 chars. user_memory_summary ≤ 600 chars (si update_user_memory=false, repite el recibido).
-exercise null salvo en practicing.
+context_summary ≤ 400 chars. Debe incluir SIEMPRE, si hay ejercicio abierto: "Ejercicio activo: …" con el número/datos exactos; no lo borres hasta resolverlo o cambiarlo. Resume aciertos del niño.
+user_memory_summary ≤ 600 chars (si update_user_memory=false, repite el recibido).
+exercise: usa el objeto cuando planteas un ejercicio nuevo (también en reviewing); si sigues el mismo, puedes dejar null pero conserva "Ejercicio activo" en context_summary.
 Dominio (study_eval): passed=true SOLO si TODOS se cumplen:
 1) phase=reviewing
 2) ≥2 aciertos reales del niño en ejercicios/variaciones (no solo “ok”)
@@ -429,6 +431,59 @@ Ejemplo (triángulo base 8 altura 4):
     prompt
 }
 
+fn last_tutor_message(context: &StudyContext) -> String {
+    context
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "assistant")
+        .map(|m| truncate_chars(&m.content, MAX_LAST_TUTOR))
+        .unwrap_or_default()
+}
+
+fn extract_active_exercise_line(summary: &str) -> Option<String> {
+    for line in summary.lines() {
+        let trimmed = line.trim();
+        if trimmed.to_lowercase().starts_with("ejercicio activo:") {
+            return Some(truncate_chars(trimmed, 180));
+        }
+    }
+    None
+}
+
+fn ensure_active_exercise_in_context(
+    summary: &str,
+    exercise: &Option<StudyExercise>,
+    previous_summary: &str,
+) -> String {
+    let mut base = summary.trim().to_string();
+    if let Some(ex) = exercise {
+        let line = format!(
+            "Ejercicio activo: {} — {}",
+            truncate_chars(&ex.title, 60),
+            truncate_chars(&ex.instructions, 140)
+        );
+        if let Some(old) = extract_active_exercise_line(&base) {
+            base = base.replacen(&old, &line, 1);
+        } else {
+            base = if base.is_empty() {
+                line
+            } else {
+                format!("{line}\n{base}")
+            };
+        }
+    } else if extract_active_exercise_line(&base).is_none() {
+        if let Some(prev) = extract_active_exercise_line(previous_summary) {
+            base = if base.is_empty() {
+                prev
+            } else {
+                format!("{prev}\n{base}")
+            };
+        }
+    }
+    truncate_chars(&base, MAX_CONTEXT_SUMMARY)
+}
+
 fn build_user_payload(
     task: &Task,
     context: &StudyContext,
@@ -451,18 +506,20 @@ fn build_user_payload(
     // Instrucciones cortas: el detalle de draw_ops solo vive en el system prompt si allow_ai_draw.
     let instruction = match (allow_ai_draw, board_has_content) {
         (true, true) => {
-            "Responde breve. Usa context + memoria + mensaje + pizarra. Si propones ejercicio o visual, RELLENA draw_ops. Evalúa study_eval."
+            "Responde breve. Usa context + last_tutor_message + mensaje + pizarra. Conserva el ejercicio activo. Evalúa study_eval."
         }
         (true, false) => {
-            "Responde breve. Usa context + memoria + mensaje. Si propones ejercicio o el niño pide dibujar, RELLENA draw_ops. Evalúa study_eval."
+            "Responde breve. Usa context + last_tutor_message + mensaje. Conserva el ejercicio activo. Evalúa study_eval."
         }
         (false, true) => {
-            "Responde breve. Usa context + memoria + mensaje + pizarra. Evalúa study_eval."
+            "Responde breve. Usa context + last_tutor_message + mensaje + pizarra. Conserva el ejercicio activo. Evalúa study_eval."
         }
         (false, false) => {
-            "Responde breve. Usa context + memoria + mensaje. Ignora pizarra. Evalúa study_eval."
+            "Responde breve. Usa context + last_tutor_message + mensaje. Conserva el ejercicio activo. Ignora pizarra. Evalúa study_eval."
         }
     };
+
+    let last_tutor = last_tutor_message(context);
 
     let mut payload = json!({
       "instruction": instruction,
@@ -479,6 +536,7 @@ fn build_user_payload(
       "phase": context.tutor_phase,
       "topic_summary": truncate_chars(&context.topic_summary, 120),
       "context_summary": truncate_chars(&context.context_summary, MAX_CONTEXT_SUMMARY),
+      "last_tutor_message": last_tutor,
       "user_memory_summary": truncate_chars(user_memory, MAX_USER_MEMORY),
       "hints_level": context.hints_level,
       "board_has_drawing": board_has_content,
@@ -777,7 +835,11 @@ async fn request_tutor_reply(
             context.context_summary.clone()
         };
     }
-    reply.context_summary = truncate_chars(&reply.context_summary, MAX_CONTEXT_SUMMARY);
+    reply.context_summary = ensure_active_exercise_in_context(
+        &reply.context_summary,
+        &reply.exercise,
+        &context.context_summary,
+    );
 
     if !update_user_memory || reply.user_memory_summary.trim().is_empty() {
         reply.user_memory_summary = if user_memory.trim().is_empty() {

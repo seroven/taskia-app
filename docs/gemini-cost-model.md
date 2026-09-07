@@ -8,7 +8,7 @@ Documento basado en el backend actual (`src-tauri/src/study.rs`) y el frontend d
 
 | Pregunta | Respuesta corta |
 |---|---|
-| ¿Se manda el chat completo? | **No** |
+| ¿Se manda el chat completo? | **No** (sí se manda un recorte de la **última** burbuja del tutor, ≤320 chars) |
 | ¿Cuántas llamadas Gemini por mensaje del niño? | **1** (`study_chat`) |
 | ¿Hay llamada al abrir una tarea? | **No** (saludo **local**, 0 tokens) |
 | ¿Qué crece con el tiempo? | Solo los **resúmenes** (con tope duro de caracteres) |
