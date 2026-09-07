@@ -2,6 +2,11 @@ import type { DrawOp } from './studyProtocol'
 
 type ExcalidrawElement = Record<string, unknown>
 
+const AI_CENTER_X = 480
+const AI_CENTER_Y = 320
+/** Tamaño deseado del dibujo (lado mayor), para que se vea grande y centrado. */
+const AI_TARGET_SIZE = 360
+
 function uid() {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 16)
 }
@@ -25,7 +30,7 @@ function baseElement(
     strokeColor: color,
     backgroundColor: 'transparent',
     fillStyle: 'solid',
-    strokeWidth: 2,
+    strokeWidth: 3,
     strokeStyle: 'solid',
     roughness: 1,
     opacity: 100,
@@ -50,9 +55,9 @@ function textElement(
   y: number,
   text: string,
   color: string,
+  fontSize = 28,
 ): ExcalidrawElement {
-  const fontSize = 20
-  const width = Math.max(40, text.length * fontSize * 0.6)
+  const width = Math.max(48, text.length * fontSize * 0.6)
   const height = fontSize * 1.4
   return {
     ...baseElement('text', x, y, width, height, color),
@@ -119,19 +124,20 @@ function stampElements(
   y: number,
   scale: number,
 ): ExcalidrawElement[] {
-  const s = Math.max(0.4, scale || 1)
+  // Escala por defecto más grande (~2×) para ejercicios visibles.
+  const s = Math.max(0.8, scale || 2)
   const color = '#2563eb'
 
   switch (id) {
     case 'right_triangle':
       return [
         {
-          ...baseElement('line', x, y, 140 * s, 100 * s, color),
+          ...baseElement('line', x, y, 220 * s, 160 * s, color),
           points: [
-            [0, 100 * s],
-            [140 * s, 100 * s],
+            [0, 160 * s],
+            [220 * s, 160 * s],
             [0, 0],
-            [0, 100 * s],
+            [0, 160 * s],
           ],
           lastCommittedPoint: null,
           startBinding: null,
@@ -141,88 +147,181 @@ function stampElements(
         },
       ]
     case 'circle':
-      return [baseElement('ellipse', x, y, 100 * s, 100 * s, color)]
+      return [baseElement('ellipse', x, y, 180 * s, 180 * s, color)]
     case 'square':
-      return [baseElement('rectangle', x, y, 100 * s, 100 * s, color)]
+      return [baseElement('rectangle', x, y, 180 * s, 180 * s, color)]
     case 'number_line': {
-      const width = 240 * s
-      const midY = 24 * s
+      const width = 360 * s
+      const midY = 32 * s
       const ticks: ExcalidrawElement[] = [
         lineElement('line', x, y + midY, width, 0, color),
       ]
       for (let i = 0; i <= 5; i += 1) {
         const tx = x + (width / 5) * i
-        ticks.push(lineElement('line', tx, y + midY - 10 * s, 0, 20 * s, color))
-        ticks.push(textElement(tx - 6, y + midY + 14 * s, String(i), color))
+        ticks.push(lineElement('line', tx, y + midY - 14 * s, 0, 28 * s, color))
+        ticks.push(textElement(tx - 8, y + midY + 18 * s, String(i), color, 24))
       }
       return ticks
     }
     case 'arrow':
-      return [lineElement('arrow', x, y, 140 * s, 0, color)]
+      return [lineElement('arrow', x, y, 200 * s, 0, color)]
     default:
-      return [baseElement('rectangle', x, y, 80 * s, 80 * s, color)]
+      return [baseElement('rectangle', x, y, 140 * s, 140 * s, color)]
   }
 }
 
+function elementBounds(el: ExcalidrawElement): {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+} {
+  const x = Number(el.x ?? 0)
+  const y = Number(el.y ?? 0)
+  const w = Number(el.width ?? 0)
+  const h = Number(el.height ?? 0)
+  const points = el.points as [number, number][] | undefined
+
+  if (points && points.length > 0) {
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (const [px, py] of points) {
+      minX = Math.min(minX, x + px)
+      minY = Math.min(minY, y + py)
+      maxX = Math.max(maxX, x + px)
+      maxY = Math.max(maxY, y + py)
+    }
+    return { minX, minY, maxX, maxY }
+  }
+
+  return {
+    minX: x,
+    minY: y,
+    maxX: x + Math.max(w, 1),
+    maxY: y + Math.max(h, 1),
+  }
+}
+
+/** Escala y centra el grupo de elementos de la IA en el lienzo. */
+export function centerAndScaleAiElements(
+  elements: ExcalidrawElement[],
+): ExcalidrawElement[] {
+  if (elements.length === 0) return elements
+
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const el of elements) {
+    const b = elementBounds(el)
+    minX = Math.min(minX, b.minX)
+    minY = Math.min(minY, b.minY)
+    maxX = Math.max(maxX, b.maxX)
+    maxY = Math.max(maxY, b.maxY)
+  }
+
+  const width = Math.max(maxX - minX, 1)
+  const height = Math.max(maxY - minY, 1)
+  const scale = Math.min(
+    AI_TARGET_SIZE / width,
+    AI_TARGET_SIZE / height,
+    3.5,
+  )
+  // Si ya es grande, no achicar demasiado; si es chico, agrandar.
+  const finalScale = width < AI_TARGET_SIZE * 0.7 || height < AI_TARGET_SIZE * 0.7
+    ? Math.max(scale, 1.4)
+    : Math.min(Math.max(scale, 0.85), 2.2)
+
+  const cx = (minX + maxX) / 2
+  const cy = (minY + maxY) / 2
+
+  return elements.map((el) => {
+    const next = { ...el }
+    const x = Number(el.x ?? 0)
+    const y = Number(el.y ?? 0)
+    next.x = AI_CENTER_X + (x - cx) * finalScale
+    next.y = AI_CENTER_Y + (y - cy) * finalScale
+    next.width = Number(el.width ?? 0) * finalScale
+    next.height = Number(el.height ?? 0) * finalScale
+
+    if (Array.isArray(el.points)) {
+      next.points = (el.points as [number, number][]).map(([px, py]) => [
+        px * finalScale,
+        py * finalScale,
+      ])
+    }
+
+    if (el.type === 'text' && typeof el.fontSize === 'number') {
+      next.fontSize = Math.max(22, Math.round(el.fontSize * finalScale))
+    }
+
+    next.strokeWidth = Math.max(2, Math.round(Number(el.strokeWidth ?? 2) * Math.min(finalScale, 1.6)))
+    next.version = Number(el.version ?? 1) + 1
+    next.versionNonce = Math.floor(Math.random() * 2_000_000_000)
+    next.updated = Date.now()
+    return next
+  })
+}
+
+/**
+ * Aplica draw_ops de la IA: siempre limpia toda la pizarra primero,
+ * dibuja las formas y las centra/agranda.
+ */
 export function applyDrawOpsToElements(
-  current: readonly ExcalidrawElement[],
+  _current: readonly ExcalidrawElement[],
   ops: DrawOp[],
 ): ExcalidrawElement[] {
-  let next = current.map((el) => ({ ...el }))
+  // Pedido de producto: al dibujar la IA, borrar toda la pizarra primero.
+  let created: ExcalidrawElement[] = []
 
   for (const op of ops) {
-    if (op.op === 'clear_layer') {
-      const layer = op.layer || 'ai'
-      next = next.filter((el) => {
-        const custom = el.customData as { layer?: string } | undefined
-        return custom?.layer !== layer
-      })
+    if (op.op === 'clear_layer' || op.op === 'clear_board') {
       continue
     }
 
     if (op.op === 'stamp') {
-      next = [...next, ...stampElements(op.id, op.x, op.y, op.scale ?? 1)]
+      created = [...created, ...stampElements(op.id, op.x, op.y, op.scale ?? 2)]
       continue
     }
 
     if (op.op === 'shape') {
       const color = op.color || '#2563eb'
-      const w = op.w ?? 120
-      const h = op.h ?? 80
-      let created: ExcalidrawElement[] = []
+      const w = op.w ?? 180
+      const h = op.h ?? 140
+      let batch: ExcalidrawElement[] = []
 
       switch (op.type) {
         case 'rectangle':
-          created = [baseElement('rectangle', op.x, op.y, w, h, color)]
+          batch = [baseElement('rectangle', op.x, op.y, w, h, color)]
           break
         case 'ellipse':
-          created = [baseElement('ellipse', op.x, op.y, w, h, color)]
+          batch = [baseElement('ellipse', op.x, op.y, w, h, color)]
           break
         case 'triangle':
-          created = [triangleElement(op.x, op.y, w, h, color)]
+          batch = [triangleElement(op.x, op.y, w, h, color)]
           break
         case 'line':
-          created = [lineElement('line', op.x, op.y, w, h, color)]
+          batch = [lineElement('line', op.x, op.y, w, h, color)]
           break
         case 'arrow':
-          created = [lineElement('arrow', op.x, op.y, w, h || 0, color)]
+          batch = [lineElement('arrow', op.x, op.y, w, h || 0, color)]
           break
         case 'text':
-          created = [textElement(op.x, op.y, op.label || '?', color)]
+          batch = [textElement(op.x, op.y, op.label || '?', color, 28)]
           break
         default:
           break
       }
 
-      if (op.label && op.type !== 'text' && created[0]) {
-        created.push(
-          textElement(op.x + 8, op.y + 8, op.label, color),
-        )
+      if (op.label && op.type !== 'text' && batch[0]) {
+        batch.push(textElement(op.x + 12, op.y + 12, op.label, color, 26))
       }
 
-      next = [...next, ...created]
+      created = [...created, ...batch]
     }
   }
 
-  return next
+  return centerAndScaleAiElements(created)
 }

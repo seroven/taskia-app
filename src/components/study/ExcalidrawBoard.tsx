@@ -151,6 +151,18 @@ export const ExcalidrawBoard = forwardRef<ExcalidrawBoardHandle, Props>(
           >,
           captureUpdate: CaptureUpdateAction.NEVER,
         })
+        // Enfoca el dibujo centrado de la IA
+        window.requestAnimationFrame(() => {
+          try {
+            api.scrollToContent(next as never, {
+              fitToContent: true,
+              animate: true,
+              duration: 280,
+            })
+          } catch {
+            // scrollToContent puede fallar si la API cambia; el dibujo igual queda.
+          }
+        })
         window.setTimeout(() => persist(), 50)
       },
       async getBoardAttachment() {

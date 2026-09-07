@@ -379,16 +379,34 @@ fn extract_json_object(text: &str) -> AppResult<String> {
         .ok_or_else(|| AppError::msg("La IA no devolvió JSON válido"))
 }
 
-fn tutor_system_prompt() -> &'static str {
-    r##"Tutor amable para niño ~10 años. Español latinoamericano, claro y breve.
+fn tutor_system_prompt(allow_ai_draw: bool) -> String {
+    let base = r##"Tutor amable para niño ~10 años. Español latinoamericano, claro y breve.
 No des la solución completa: guía con preguntas/pistas. Prioriza la tarea actual.
 Recibes context_summary (esta tarea) y user_memory_summary (entre tareas). No el chat entero.
-Pizarra opcional: si board_has_drawing=false, ignórala por completo.
+Pizarra de entrada: si board_has_drawing=false, ignora lo que haya dibujado el niño.
 Responde SOLO JSON (sin markdown):
 {"phase":"understanding|practicing|reviewing","speak_to_child":"...","ask_questions":[],"topic_summary":"...","context_summary":"...","user_memory_summary":"...","exercise":null,"draw_ops":[],"hints_level":0}
 context_summary ≤ 400 chars. user_memory_summary ≤ 600 chars (si update_user_memory=false, repite el recibido).
-draw_ops [] por defecto; solo dibuja si ayuda de verdad. exercise null salvo en practicing.
+exercise null salvo en practicing.
+"##;
+
+    if !allow_ai_draw {
+        // Sin bloque de dibujo: no gastamos tokens enseñando draw_ops si el switch está OFF.
+        return format!("{base}draw_ops siempre []. No dibujes en la pizarra.");
+    }
+
+    format!(
+        r##"{base}Pizarra de salida: allow_ai_draw=true. Si el niño pide ejercicio nuevo, practica, o conviene visualizar:
+1) Empieza con {{"op":"clear_board"}} (la app borra toda la pizarra y centra tu dibujo grande).
+2) Dibuja con 3–8 ops. Preferí stamps con scale≈2; luego shape/text con labels.
+3) No dejes números/figuras solo en speak_to_child: deben ir en draw_ops.
+4) Coordenadas relativas libres (la app re-centra). Labels claros (base, altura, lados).
+Stamps: right_triangle, circle, square, number_line, arrow.
+Shapes: rectangle|ellipse|triangle|line|arrow|text (x,y,w,h,label?,color?).
+Ejemplo (triángulo base 8 altura 4):
+[{{"op":"clear_board"}},{{"op":"stamp","id":"right_triangle","x":0,"y":0,"scale":2}},{{"op":"shape","type":"text","x":110,"y":175,"label":"8"}},{{"op":"shape","type":"text","x":-30,"y":70,"label":"4"}}]
 "##
+    )
 }
 
 fn build_user_payload(
@@ -398,6 +416,7 @@ fn build_user_payload(
     board_description: Option<&str>,
     user_memory: &str,
     update_user_memory: bool,
+    allow_ai_draw: bool,
 ) -> String {
     let description = truncate_chars(
         task.description.as_deref().unwrap_or(""),
@@ -408,12 +427,24 @@ fn build_user_payload(
         .filter(|s| !s.is_empty())
         .is_some();
 
-    json!({
-      "instruction": if board_has_content {
-        "Responde breve. Usa context_summary + user_memory + mensaje + pizarra. Actualiza context_summary."
-      } else {
-        "Responde breve. Usa context_summary + user_memory + mensaje. Ignora pizarra. Actualiza context_summary."
-      },
+    // Instrucciones cortas: el detalle de draw_ops solo vive en el system prompt si allow_ai_draw.
+    let instruction = match (allow_ai_draw, board_has_content) {
+        (true, true) => {
+            "Responde breve. Usa context + memoria + mensaje + pizarra. Si propones ejercicio o visual, RELLENA draw_ops."
+        }
+        (true, false) => {
+            "Responde breve. Usa context + memoria + mensaje. Si propones ejercicio o el niño pide dibujar, RELLENA draw_ops."
+        }
+        (false, true) => {
+            "Responde breve. Usa context + memoria + mensaje + pizarra."
+        }
+        (false, false) => {
+            "Responde breve. Usa context + memoria + mensaje. Ignora pizarra."
+        }
+    };
+
+    let mut payload = json!({
+      "instruction": instruction,
       "update_user_memory": update_user_memory,
       "task": {
         "title": truncate_chars(&task.title, 120),
@@ -427,14 +458,28 @@ fn build_user_payload(
       "user_memory_summary": truncate_chars(user_memory, MAX_USER_MEMORY),
       "hints_level": context.hints_level,
       "board_has_drawing": board_has_content,
-      "board_drawing": if board_has_content {
-        truncate_chars(board_description.unwrap_or(""), MAX_BOARD_DESCRIPTION)
-      } else {
-        String::new()
-      },
       "child_message": truncate_chars(user_message, 800)
-    })
-    .to_string()
+    });
+
+    // Solo incluimos campos de dibujo/entrada de pizarra cuando aportan.
+    if allow_ai_draw {
+        payload
+            .as_object_mut()
+            .expect("payload object")
+            .insert("allow_ai_draw".into(), json!(true));
+    }
+    if board_has_content {
+        let obj = payload.as_object_mut().expect("payload object");
+        obj.insert(
+            "board_drawing".into(),
+            json!(truncate_chars(
+                board_description.unwrap_or(""),
+                MAX_BOARD_DESCRIPTION
+            )),
+        );
+    }
+
+    payload.to_string()
 }
 
 async fn call_gemini(
@@ -465,6 +510,20 @@ async fn call_gemini(
         }));
     }
 
+    // Gemini 3.x gasta tokens en "thinking"; con max bajo la respuesta JSON sale vacía/cortada.
+    let mut generation_config = json!({
+      "maxOutputTokens": 4096,
+      "responseMimeType": "application/json"
+    });
+    if model.contains("gemini-3") {
+      generation_config["thinkingConfig"] = json!({ "thinkingLevel": "low" });
+    } else if model.contains("gemini-2.5") {
+      generation_config["thinkingConfig"] = json!({ "thinkingBudget": 0 });
+      generation_config["temperature"] = json!(0.6);
+    } else {
+      generation_config["temperature"] = json!(0.6);
+    }
+
     let body = json!({
       "systemInstruction": {
         "parts": [{ "text": system }]
@@ -473,11 +532,7 @@ async fn call_gemini(
         "role": "user",
         "parts": parts
       }],
-      "generationConfig": {
-        "temperature": 0.6,
-        "maxOutputTokens": 700,
-        "responseMimeType": "application/json"
-      }
+      "generationConfig": generation_config
     });
 
     let client = reqwest::Client::new();
@@ -493,12 +548,66 @@ async fn call_gemini(
         return Err(AppError::msg(message.to_string()));
     }
 
-    let text = payload
-        .pointer("/candidates/0/content/parts/0/text")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::msg("Respuesta vacía de Gemini"))?;
+    let block = payload
+        .pointer("/promptFeedback/blockReason")
+        .and_then(|v| v.as_str());
+    if let Some(reason) = block {
+        return Err(AppError::msg(format!(
+            "Gemini bloqueó la solicitud ({reason})"
+        )));
+    }
 
-    Ok(text.to_string())
+    extract_candidate_text(&payload)
+}
+
+fn extract_candidate_text(payload: &Value) -> AppResult<String> {
+    let finish = payload
+        .pointer("/candidates/0/finishReason")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let parts = payload
+        .pointer("/candidates/0/content/parts")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| {
+            if finish == "MAX_TOKENS" {
+                AppError::msg(
+                    "Gemini se quedó sin tokens de salida (suele pasar por el modo thinking). Probá de nuevo o usá un modelo flash sin thinking alto.",
+                )
+            } else if finish.is_empty() {
+                AppError::msg("Respuesta vacía de Gemini")
+            } else {
+                AppError::msg(format!("Respuesta vacía de Gemini ({finish})"))
+            }
+        })?;
+
+    let mut texts = Vec::new();
+    for part in parts {
+        // En modelos con thinking, parts[0] puede ser thought sin texto útil
+        if part.get("thought").and_then(|v| v.as_bool()) == Some(true) {
+            continue;
+        }
+        if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                texts.push(trimmed.to_string());
+            }
+        }
+    }
+
+    let joined = texts.join("\n").trim().to_string();
+    if joined.is_empty() {
+        if finish == "MAX_TOKENS" {
+            return Err(AppError::msg(
+                "Gemini gastó los tokens pensando y no alcanzó a responder. Reintentá; si sigue, bajá el thinking del modelo.",
+            ));
+        }
+        return Err(AppError::msg(
+            "Gemini no devolvió texto útil. Revisá GEMINI_MODEL / cuota de la API.",
+        ));
+    }
+
+    Ok(joined)
 }
 
 fn parse_tutor_reply(raw: &str) -> AppResult<GeminiTutorReply> {
@@ -559,11 +668,13 @@ fn parse_tutor_reply(raw: &str) -> AppResult<GeminiTutorReply> {
 fn gemini_credentials() -> AppResult<(String, String)> {
     let api_key = std::env::var("GEMINI_API_KEY")
         .map_err(|_| AppError::msg("Falta GEMINI_API_KEY en el archivo .env"))?;
-    if api_key.trim().is_empty() {
+    let api_key = api_key.trim().trim_matches('"').trim_matches('\'').to_string();
+    if api_key.is_empty() {
         return Err(AppError::msg("Configura GEMINI_API_KEY en el archivo .env"));
     }
-    let model =
-        std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-3.6-flash".to_string());
+    let model = std::env::var("GEMINI_MODEL")
+        .unwrap_or_else(|_| "gemini-2.0-flash".to_string());
+    let model = model.trim().trim_matches('"').trim_matches('\'').to_string();
     Ok((api_key, model))
 }
 
@@ -577,8 +688,9 @@ async fn request_tutor_reply(
     board_image_base64: Option<&str>,
     user_memory: &str,
     update_user_memory: bool,
+    allow_ai_draw: bool,
 ) -> AppResult<GeminiTutorReply> {
-    let system = tutor_system_prompt();
+    let system = tutor_system_prompt(allow_ai_draw);
     let payload = build_user_payload(
         task,
         context,
@@ -586,24 +698,19 @@ async fn request_tutor_reply(
         board_description,
         user_memory,
         update_user_memory,
+        allow_ai_draw,
     );
-    let raw = call_gemini(api_key, model, system, &payload, board_image_base64).await?;
+    let raw = call_gemini(api_key, model, &system, &payload, board_image_base64).await?;
 
-    // Sin segunda llamada de repair: fallback local si el JSON falla
-    let mut reply = match parse_tutor_reply(&raw) {
-        Ok(parsed) => parsed,
-        Err(_) => GeminiTutorReply {
-            phase: context.tutor_phase.as_str().to_string(),
-            speak_to_child: "¡Uy! Se me trabó un poquito. ¿Me lo cuentas otra vez con tus palabras?".into(),
-            ask_questions: vec!["¿Qué parte quieres practicar ahora?".into()],
-            topic_summary: context.topic_summary.clone(),
-            context_summary: context.context_summary.clone(),
-            user_memory_summary: user_memory.to_string(),
-            exercise: None,
-            draw_ops: Vec::new(),
-            hints_level: context.hints_level,
-        },
-    };
+    let mut reply = parse_tutor_reply(&raw).map_err(|_| {
+        AppError::msg(
+            "La IA respondió, pero no en el formato esperado. Probá enviar de nuevo (no gastamos un segundo intento automático para cuidar tokens).",
+        )
+    })?;
+
+    if !allow_ai_draw {
+        reply.draw_ops = Vec::new();
+    }
 
     if reply.speak_to_child.trim().is_empty() {
         reply.speak_to_child =
@@ -762,6 +869,7 @@ pub async fn study_chat(
     user_message: String,
     board_description: Option<String>,
     board_image_base64: Option<String>,
+    allow_ai_draw: Option<bool>,
     state: State<'_, AppState>,
 ) -> AppResult<StudyChatResponse> {
     let _ = app;
@@ -778,6 +886,7 @@ pub async fn study_chat(
         return Err(AppError::msg("Escribe un mensaje"));
     }
 
+    let allow_ai_draw = allow_ai_draw.unwrap_or(false);
     let (api_key, model) = gemini_credentials()?;
     let mut context = load_context(&state.pool, task_id).await?;
     let user_memory = load_user_memory(&state.pool, user.id).await?;
@@ -803,6 +912,7 @@ pub async fn study_chat(
         board_image_base64.as_deref(),
         &user_memory,
         update_user_memory,
+        allow_ai_draw,
     )
     .await?;
     apply_reply(

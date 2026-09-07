@@ -91,12 +91,14 @@ export const api = {
     task_id: number,
     user_message: string,
     board?: { description?: string; image_base64?: string | null },
+    allowAiDraw = false,
   ) {
     return invoke<import('./lib/studyProtocol').StudyChatResponse>('study_chat', {
       taskId: task_id,
       userMessage: user_message,
       boardDescription: board?.description ?? null,
       boardImageBase64: board?.image_base64 ?? null,
+      allowAiDraw,
     })
   },
 }

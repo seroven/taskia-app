@@ -80,14 +80,17 @@ export function StudyPage({ taskId, onBack }: Props) {
     saveBoardRef.current(scene)
   }, [])
 
-  async function onSend(message: string, includeBoard: boolean) {
+  async function onSend(
+    message: string,
+    options: { includeBoard: boolean; allowAiDraw: boolean },
+  ) {
     setSending(true)
     setChatError(null)
     try {
       let board:
         | { description?: string; image_base64?: string | null }
         | undefined
-      if (includeBoard) {
+      if (options.includeBoard) {
         const attachment = await boardRef.current?.getBoardAttachment()
         if ((attachment?.elementCount ?? 0) > 0) {
           board = {
@@ -96,7 +99,12 @@ export function StudyPage({ taskId, onBack }: Props) {
           }
         }
       }
-      const result = await api.studyChat(taskId, message, board)
+      const result = await api.studyChat(
+        taskId,
+        message,
+        board,
+        options.allowAiDraw,
+      )
       setContext(result.context)
       setPhase(result.reply.phase)
       setExercise(result.reply.exercise)

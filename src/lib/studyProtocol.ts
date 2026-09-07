@@ -25,6 +25,7 @@ export interface StudyExercise {
 }
 
 export type DrawOp =
+  | { op: 'clear_board' }
   | { op: 'clear_layer'; layer: string }
   | {
       op: 'shape'
@@ -93,6 +94,10 @@ export function parseDrawOps(raw: unknown): DrawOp[] {
   for (const item of raw) {
     if (!item || typeof item !== 'object') continue
     const op = (item as { op?: string }).op
+    if (op === 'clear_board') {
+      ops.push({ op: 'clear_board' })
+      continue
+    }
     if (op === 'clear_layer') {
       ops.push({
         op: 'clear_layer',
